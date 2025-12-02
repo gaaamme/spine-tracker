@@ -91,40 +91,24 @@ function onDisconnected(event) {
 
 function handleNotifications(event) {
     const value = event.target.value;
-    // We expect 5 bytes, first 2 are raw 10-bit value
     const highByte = value.getUint8(0);
     const lowByte = value.getUint8(1);
 
     rawSensorValue = (highByte << 8) | lowByte;
 
-    // Calculate angle based on calibration
-    // Assuming bending INCREASES resistance -> DECREASES voltage -> DECREASES analog reading (or vice versa)
-    // Let's assume standard flex sensor: Bend = Higher Resistance.
-    // Voltage Divider: Vout = Vcc * (R_flex / (R_fixed + R_flex)) -> Bend = Higher Voltage -> Higher ADC
-    // OR Vout = Vcc * (R_fixed / (R_fixed + R_flex)) -> Bend = Lower Voltage -> Lower ADC
-
-    // We will assume deviation from calibration offset maps to angle.
-    // Let's assume a range of +/- 300 units corresponds to 90 degrees.
-    // If raw < offset, it might be bending one way.
-
     const diff = rawSensorValue - calibrationOffset;
-
-    // Map diff to angle. 
-    // Sensitivity factor: degrees per unit change.
     // Let's guess: 300 units = 90 degrees -> 0.3 degrees/unit
     const sensitivity = 0.3;
-
     // We clamp the angle between 0 (straight) and 140 (fully bent)
-    // We take absolute value of diff because we don't know direction yet, 
-    // but usually user bends in one direction.
-    // If calibration is "straight", any bend is an increase in angle.
-
     currentAngle = Math.abs(diff * sensitivity);
     currentAngle = Math.min(Math.max(currentAngle, 0), 140);
+
+    console.log("Raw:", rawSensorValue, "Angle:", currentAngle); // Debug
 
     updateSensorDisplay();
     drawArm();
 }
+
 
 function calibrate() {
     calibrationOffset = rawSensorValue;
