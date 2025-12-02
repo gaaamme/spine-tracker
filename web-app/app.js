@@ -1,6 +1,7 @@
 const serviceUUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
 const charUUID = "19b10001-e8f2-537e-4f6c-d104768a1214";
 
+const sensorDataContainer = document.getElementById('sensorData');
 const connectBtn = document.getElementById('connectBtn');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const statusText = document.getElementById('status');
