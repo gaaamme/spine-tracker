@@ -8,6 +8,9 @@ const statusText = document.getElementById('status');
 const canvas = document.getElementById('armCanvas');
 const ctx = canvas.getContext('2d');
 
+const bufferSize = 5; // Taille de la fenêtre de moyenne
+let sensorBuffer = [];
+
 let device;
 let server;
 let characteristic;
@@ -95,12 +98,23 @@ function handleNotifications(event) {
     const highByte = value.getUint8(0);
     const lowByte = value.getUint8(1);
 
-    rawSensorValue = (highByte << 8) | lowByte;
+    // Lecture de la valeur brute
+    const raw = (highByte << 8) | lowByte;
 
+    // Ajoute la nouvelle valeur au buffer
+    sensorBuffer.push(raw);
+    if (sensorBuffer.length > bufferSize) {
+        sensorBuffer.shift(); // Retire la plus ancienne valeur
+    }
+
+    // Calcule la moyenne des valeurs du buffer
+    const avgRaw = sensorBuffer.reduce((a, b) => a + b, 0) / sensorBuffer.length;
+    rawSensorValue = Math.round(avgRaw); // Utilise la moyenne filtrée
+
+    // Calcul de l'angle
     const diff = rawSensorValue - calibrationOffset;
-    // Let's guess: 300 units = 90 degrees -> 0.3 degrees/unit
-    const sensitivity = 0.3;
-    // We clamp the angle between 0 (straight) and 140 (fully bent)
+    const sensitivity = 0.3; //300 units = 90 degrees -> 0.3 degrees/unit
+
     currentAngle = Math.abs(diff * sensitivity);
     currentAngle = Math.min(Math.max(currentAngle, 0), 140);
 
@@ -109,7 +123,6 @@ function handleNotifications(event) {
     updateSensorDisplay();
     drawArm();
 }
-
 
 function calibrate() {
     calibrationOffset = rawSensorValue;
