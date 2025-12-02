@@ -1,36 +1,42 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spine Tracker</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <title>Elbow Flexion Tracker</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="container">
         <header>
-            <h1>Spine Tracker</h1>
-            <p class="status" id="statusText">Disconnected</p>
+            <h1>Elbow Flexion Tracker</h1>
+            <p>Real-time visualization of elbow angle.</p>
         </header>
 
-        <main>
-            <div class="visualization-container">
+        <div class="main-content">
+            <div class="visualization">
                 <canvas id="spineCanvas"></canvas>
             </div>
-            
-            <div class="controls">
-                <button id="connectBtn" class="btn primary">Connect to Spine</button>
-            </div>
 
-            <div class="sensor-data" id="sensorData">
-                <!-- Sensor values will be populated here for debugging -->
+            <div class="sidebar">
+                <div class="controls">
+                    <button id="connectBtn">Connect to Elbow Tracker</button>
+                    <button id="calibrateBtn" disabled>Calibrate (Arm Straight)</button>
+                </div>
+                <div id="statusText">Disconnected</div>
+
+                <div class="sensor-values">
+                    <h3>Sensor Data</h3>
+                    <div id="sensorData">
+                        <!-- Values will be populated here -->
+                    </div>
+                </div>
             </div>
-        </main>
+        </div>
     </div>
-
     <script src="app.js"></script>
 </body>
+
 </html>

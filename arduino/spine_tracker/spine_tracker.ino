@@ -1,45 +1,41 @@
 /*
-  Spine Tracker Firmware
+  Elbow Flexion Tracker Firmware
   Board: Arduino Nano 33 BLE
-  
-  Reads 5 flex sensors connected to analog pins A0-A4.
-  Transmits data via BLE to a connected central device (phone/web app).
-  
+
+  Reads 1 flex sensor connected to analog pin A0.
+  Sends RAW 10-bit sensor data via BLE.
+  Calibration is handled by the client (Web App).
+
   Circuit:
-  - 5 x Flex Sensors
-  - 5 x 10k Ohm Resistors (Voltage Divider)
-  - Pin A0: Sensor 1 (Top/Cervical)
-  - Pin A1: Sensor 2
-  - Pin A2: Sensor 3
-  - Pin A3: Sensor 4
-  - Pin A4: Sensor 5 (Bottom/Lumbar)
+  - 1 x Flex Sensor on Pin A0
+  - 1 x 10k Ohm Resistor (Voltage Divider)
   - VCC (3.3V) and GND
 */
 
 #include <ArduinoBLE.h>
 
 // BLE Service UUID
-const char* serviceUUID = "19B10000-E8F2-537E-4F6C-D104768A1214";
+const char *serviceUUID = "19B10000-E8F2-537E-4F6C-D104768A1214";
 // BLE Characteristic UUID (Read | Notify)
-const char* charUUID = "19B10001-E8F2-537E-4F6C-D104768A1214";
+const char *charUUID = "19B10001-E8F2-537E-4F6C-D104768A1214";
 
 BLEService spineService(serviceUUID);
-BLECharacteristic spineDataChar(charUUID, BLERead | BLENotify, 5); // 5 bytes for 5 sensors
+BLECharacteristic spineDataChar(charUUID, BLERead | BLENotify,
+                                5); // Keeping 5 bytes for compatibility
 
-const int sensorPins[] = {A0, A1, A2, A3, A4};
-const int numSensors = 5;
-uint8_t sensorValues[5]; // Store mapped values (0-255)
+const int sensorPin = A0;
+uint8_t sensorValues[5];
 
 void setup() {
   Serial.begin(9600);
-  // while (!Serial); // Uncomment to wait for serial connection for debugging
 
   if (!BLE.begin()) {
     Serial.println("starting BLE failed!");
-    while (1);
+    while (1)
+      ;
   }
 
-  BLE.setLocalName("SpineTracker");
+  BLE.setLocalName("ElbowTracker");
   BLE.setAdvertisedService(spineService);
 
   spineService.addCharacteristic(spineDataChar);
@@ -58,7 +54,7 @@ void loop() {
     Serial.println(central.address());
 
     while (central.connected()) {
-      readSensors();
+      readSensor();
       spineDataChar.writeValue(sensorValues, 5);
       delay(50); // 20Hz update rate
     }
@@ -68,18 +64,21 @@ void loop() {
   }
 }
 
-void readSensors() {
-  for (int i = 0; i < numSensors; i++) {
-    int rawValue = analogRead(sensorPins[i]);
-    // Map 10-bit ADC (0-1023) to 8-bit (0-255)
-    // Adjust the input range (e.g., 300-700) based on your specific flex sensor calibration
-    // For now, we use the full range, but you should calibrate this!
-    int mappedValue = map(rawValue, 0, 1023, 0, 255); 
-    sensorValues[i] = (uint8_t)constrain(mappedValue, 0, 255);
-    
-    // Debug print
-    Serial.print(sensorValues[i]);
-    Serial.print(" ");
+void readSensor() {
+  int rawValue = analogRead(sensorPin);
+
+  // Send raw 10-bit value (0-1023) split into 2 bytes
+  // Byte 0: High byte
+  // Byte 1: Low byte
+  sensorValues[0] = (rawValue >> 8) & 0xFF;
+  sensorValues[1] = rawValue & 0xFF;
+
+  // Fill the rest with 0
+  for (int i = 2; i < 5; i++) {
+    sensorValues[i] = 0;
   }
-  // Serial.println();
+
+  // Debug print
+  Serial.print("Raw: ");
+  Serial.println(rawValue);
 }
