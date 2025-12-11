@@ -19,13 +19,31 @@
             <canvas id="armCanvas"></canvas>
         </div>
 
-        <div class="controls">
-            <button id="connectBtn" class="btn">Connect to Serial</button>
-            <button id="calibrateBtn" class="btn btn-secondary" disabled>Calibrate</button>
-        </div>
+        <div class="controls-wrapper">
+            <div class="status-bar">
+                <span id="status" class="status">Disconnected</span>
+            </div>
 
-        <p id="status" class="status">Disconnected</p>
-        <div id="sensorData" class="sensor-data"></div>
+            <div class="controls">
+                <button id="connectBtn" class="btn">Connect to Serial</button>
+                <button id="calibrateBtn" class="btn" disabled>Calibrate</button>
+            </div>
+
+            <div id="sensorData" class="sensor-data">
+                <div class="data-card">
+                    <span class="data-label">Raw Input</span>
+                    <span class="data-value" id="val-raw">0</span>
+                </div>
+                <div class="data-card">
+                    <span class="data-label">Calibration</span>
+                    <span class="data-value" id="val-offset">0</span>
+                </div>
+                <div class="data-card">
+                    <span class="data-label">Flex Angle</span>
+                    <span class="data-value" id="val-angle">0.0°</span>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script src="app.js"></script>

@@ -1,11 +1,14 @@
-const sensorDataContainer = document.getElementById('sensorData');
+const valRaw = document.getElementById('val-raw');
+const valOffset = document.getElementById('val-offset');
+const valAngle = document.getElementById('val-angle');
+
 const connectBtn = document.getElementById('connectBtn');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const statusText = document.getElementById('status');
 const canvas = document.getElementById('armCanvas');
 const ctx = canvas.getContext('2d');
 
-const bufferSize = 5; // Taille de la fenêtre de moyenne
+const bufferSize = 5;
 let sensorBuffer = [];
 
 let port;
@@ -13,21 +16,20 @@ let reader;
 let keepReading = false;
 
 let rawSensorValue = 0;
-let calibrationOffset = 0; // The raw value when arm is straight
-let currentAngle = 0; // In degrees, 0 = straight
+let calibrationOffset = 0;
+let currentAngle = 0;
+let targetAngle = 0; // For smooth animation
 
 // Visualization parameters
-const armLength = 150;
-const armWidth = 40;
+const centerX = canvas.width / 2;
+const centerY = canvas.height / 2;
 
-// Resize canvas to fit container
 function resizeCanvas() {
     canvas.width = canvas.parentElement.clientWidth;
     canvas.height = canvas.parentElement.clientHeight;
-    drawArm();
 }
 window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+resizeCanvas(); // Initial call
 
 connectBtn.addEventListener('click', async () => {
     if (port && port.readable) {
@@ -44,10 +46,10 @@ calibrateBtn.addEventListener('click', () => {
 async function connect() {
     try {
         if ("serial" in navigator) {
-            statusText.textContent = "Requesting Serial Port...";
+            statusText.textContent = "Requesting Port...";
             port = await navigator.serial.requestPort();
 
-            statusText.textContent = "Opening Port...";
+            statusText.textContent = "Opening...";
             await port.open({ baudRate: 9600 });
 
             statusText.textContent = "Connected";
@@ -57,12 +59,13 @@ async function connect() {
 
             keepReading = true;
             readSerialLoop();
+            animate(); // Start animation loop
         } else {
-            statusText.textContent = "Web Serial API not supported in this browser.";
+            statusText.textContent = "Web Serial not supported.";
         }
     } catch (error) {
-        console.error('Connection failed!', error);
-        statusText.textContent = "Connection Failed: " + error.message;
+        console.error(error);
+        statusText.textContent = "Failed: " + error.message;
     }
 }
 
@@ -83,7 +86,6 @@ function onDisconnected() {
     statusText.classList.remove('connected');
     connectBtn.textContent = "Connect to Serial";
     calibrateBtn.disabled = true;
-    console.log("Port closed.");
 }
 
 class LineBreakTransformer {
@@ -94,7 +96,7 @@ class LineBreakTransformer {
     transform(chunk, controller) {
         this.container += chunk;
         const lines = this.container.split('\r\n');
-        this.container = lines.pop(); // Keep the rest (last partial line)
+        this.container = lines.pop();
         lines.forEach(line => controller.enqueue(line));
     }
 
@@ -104,7 +106,6 @@ class LineBreakTransformer {
 }
 
 async function readSerialLoop() {
-    // Pipe through TextDecoder and LineSplitter
     const textDecoder = new TextDecoderStream();
     const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
     const reader = textDecoder.readable
@@ -114,111 +115,182 @@ async function readSerialLoop() {
     try {
         while (keepReading) {
             const { value, done } = await reader.read();
-            if (done) {
-                // Reader has been canceled.
-                break;
-            }
-            if (value) {
-                handleSerialData(value);
-            }
+            if (done) break;
+            if (value) handleSerialData(value);
         }
     } catch (error) {
-        console.error("Error reading from serial:", error);
+        console.error(error);
     } finally {
         reader.releaseLock();
     }
 }
 
 function handleSerialData(dataString) {
-    // Parse integer from string
     const raw = parseInt(dataString.trim());
     if (isNaN(raw)) return;
 
-    // Ajoute la nouvelle valeur au buffer
     sensorBuffer.push(raw);
-    if (sensorBuffer.length > bufferSize) {
-        sensorBuffer.shift(); // Retire la plus ancienne valeur
-    }
+    if (sensorBuffer.length > bufferSize) sensorBuffer.shift();
 
-    // Calcule la moyenne des valeurs du buffer
     const avgRaw = sensorBuffer.reduce((a, b) => a + b, 0) / sensorBuffer.length;
-    rawSensorValue = Math.round(avgRaw); // Utilise la moyenne filtrée
+    rawSensorValue = Math.round(avgRaw);
 
-    // Calcul de l'angle
     const diff = rawSensorValue - calibrationOffset;
-    const sensitivity = 0.3; //300 units = 90 degrees -> 0.3 degrees/unit
+    const sensitivity = 0.3;
 
-    currentAngle = Math.abs(diff * sensitivity);
-    currentAngle = Math.min(Math.max(currentAngle, 0), 140);
-
-    // console.log("Raw:", rawSensorValue, "Angle:", currentAngle); // Debug
+    // Target for animation interlpolation
+    let angle = Math.abs(diff * sensitivity);
+    targetAngle = Math.min(Math.max(angle, 0), 140);
 
     updateSensorDisplay();
-    drawArm();
 }
 
 function calibrate() {
     calibrationOffset = rawSensorValue;
-    console.log("Calibrated! Offset:", calibrationOffset);
-    alert("Calibration set! Arm is now considered straight.");
+    alert("Calibration Set!");
 }
 
 function updateSensorDisplay() {
-    sensorDataContainer.innerHTML = `
-        <span>Raw: ${rawSensorValue}</span>
-        <span>Offset: ${calibrationOffset}</span>
-        <span>Angle: ${currentAngle.toFixed(1)}°</span>
-    `;
+    valRaw.textContent = rawSensorValue;
+    valOffset.textContent = calibrationOffset;
+    valAngle.textContent = currentAngle.toFixed(1) + "°";
 }
 
-function drawArm() {
+// --- VISUALIZATION ENGINE ---
+
+function getColorForAngle(angle) {
+    // 0-45: Green/Blue (Safe)
+    // 45-90: Orange (Warning)
+    // 90+: Red (Danger)
+    if (angle < 45) return '#0ea5e9'; // Blue
+    if (angle < 90) return '#f59e0b'; // Amber
+    return '#ef4444'; // Red
+}
+
+function animate() {
+    if (!keepReading) return;
+
+    // Smooth interpolation (Lerp)
+    currentAngle = currentAngle + (targetAngle - currentAngle) * 0.1;
+
+    drawScene();
+    requestAnimationFrame(animate);
+}
+
+function drawScene() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const startX = canvas.width / 2;
-    const startY = canvas.height / 2 + 100;
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2 + 50;
+    const scale = Math.min(canvas.width, canvas.height) / 500; // Responsive scale
 
-    // Draw Upper Arm (Fixed, vertical)
+    const pivotX = cx;
+    const pivotY = cy;
+
+    const upperArmLength = 120 * scale;
+    const forearmLength = 120 * scale;
+    const thickness = 25 * scale;
+
+    const activeColor = getColorForAngle(currentAngle);
+
+    // --- 1. Draw Gauge Arc ---
+    ctx.beginPath();
+    ctx.arc(pivotX, pivotY, upperArmLength * 1.5, Math.PI, 2 * Math.PI);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 10 * scale;
     ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = armWidth;
-    ctx.strokeStyle = '#cbd5e1'; // Bone color
-
-    ctx.beginPath();
-    ctx.moveTo(startX, startY);
-    ctx.lineTo(startX, startY - armLength);
     ctx.stroke();
 
-    // Draw Forearm (Rotating)
-    // Pivot point is (startX, startY - armLength)
-    const pivotX = startX;
-    const pivotY = startY - armLength;
+    // Active Gauge
+    const gaugeStart = Math.PI + Math.PI / 2; // Start from top (vertical)
+    // Map angle 0-140 to gauge. 0 deg = vertical. 140 deg = horizontal-ish
+    // Let's visualize flexion: 0 is straight arm (vertical). 
+    // We want the gauge to fill as angle increases.
+    const gaugeEnd = gaugeStart + (currentAngle * Math.PI / 180);
 
-    // Calculate end point of forearm
-    // Angle 0 = Straight up (same as upper arm)
-    const rad = (currentAngle * Math.PI) / 180;
-    const forearmAngle = -Math.PI / 2 + rad; // Start pointing up, rotate clockwise
-
-    const endX = pivotX + Math.cos(forearmAngle) * armLength;
-    const endY = pivotY + Math.sin(forearmAngle) * armLength;
-
-    ctx.strokeStyle = '#94a3b8'; // Forearm color
     ctx.beginPath();
-    ctx.moveTo(pivotX, pivotY);
-    ctx.lineTo(endX, endY);
+    ctx.arc(pivotX, pivotY, upperArmLength * 1.5, gaugeStart, gaugeEnd, false);
+    ctx.strokeStyle = activeColor;
+    ctx.shadowColor = activeColor;
+    ctx.shadowBlur = 15;
+    ctx.stroke();
+    ctx.shadowBlur = 0; // Reset
+
+    // --- 2. Draw Upper Arm (Fixed Vertical) ---
+    // Function to draw a capsule/bone shape
+
+    ctx.save();
+    ctx.translate(pivotX, pivotY);
+    ctx.rotate(Math.PI); // Point Up
+
+    // Draw Bone Styles
+    ctx.fillStyle = '#334155';
+    ctx.strokeStyle = activeColor;
+    ctx.lineWidth = 2;
+
+    // Upper Arm Shape
+    ctx.beginPath();
+    ctx.roundRect(-thickness / 2, 0, thickness, upperArmLength, 10);
+    ctx.fill();
     ctx.stroke();
 
-    // Draw Elbow Joint
+    ctx.restore();
+
+    // --- 3. Draw Forearm (Rotates) ---
+
+    ctx.save();
+    ctx.translate(pivotX, pivotY);
+    // Rotate based on angle. -PI/2 is straight up. 
+    // Adding angle rotates it "down" (flexion)
+    const rotation = -Math.PI + (currentAngle * Math.PI / 180);
+    ctx.rotate(rotation);
+
+    // Forearm Shape
+    ctx.beginPath();
+    ctx.roundRect(-thickness / 2, 0, thickness, forearmLength, 10);
     ctx.fillStyle = '#475569';
-    ctx.beginPath();
-    ctx.arc(pivotX, pivotY, armWidth / 1.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Draw Hand
-    ctx.fillStyle = '#e2e8f0';
+    // Add "Neon" Core to forearm
     ctx.beginPath();
-    ctx.arc(endX, endY, armWidth / 1.8, 0, Math.PI * 2);
+    ctx.moveTo(0, 10);
+    ctx.lineTo(0, forearmLength - 10);
+    ctx.strokeStyle = activeColor;
+    ctx.lineWidth = 4 * scale;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = activeColor;
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+
+    // --- 4. Draw Joint (Elbow) ---
+    ctx.beginPath();
+    ctx.arc(pivotX, pivotY, thickness * 0.8, 0, Math.PI * 2);
+    ctx.fillStyle = '#1e293b';
     ctx.fill();
+    ctx.strokeStyle = activeColor;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Inner Glow Dot
+    ctx.beginPath();
+    ctx.arc(pivotX, pivotY, thickness * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = activeColor;
+    ctx.shadowColor = activeColor;
+    ctx.shadowBlur = 15;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // --- 5. Draw Angle Text near elbow ---
+    ctx.font = `bold ${16 * scale}px 'Outfit', sans-serif`;
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText(Math.round(currentAngle) + "°", pivotX, pivotY + (40 * scale));
+
+    // Request next frame if not in loop (for redundancy logic if needed, but handled by animate)
 }
 
 // Initial draw
-drawArm();
+drawScene();
