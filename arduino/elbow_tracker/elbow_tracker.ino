@@ -1,79 +1,52 @@
 /*
   Elbow Flexion Tracker Firmware
-  Board: Arduino Nano 33 BLE
+  Board: Arduino Uno
+  Module: Bluetooth v3.0 (HC-05/HC-06)
 
   Reads 1 flex sensor connected to analog pin A0.
-  Sends RAW 10-bit sensor data via BLE.
+  Sends RAW 10-bit sensor data via Bluetooth Serial (SoftwareSerial).
   Calibration is handled by the client (Web App).
 
   Circuit:
   - 1 x Flex Sensor on Pin A0
   - 1 x 10k Ohm Resistor (Voltage Divider)
-  - VCC (3.3V) and GND
+  - Bluetooth Module (HC-05/HC-06):
+    - TX -> Pin 10 (Arduino RX)
+    - RX -> Pin 11 (Arduino TX) - Use Voltage Divider (2k/1k)
+    - VCC -> 5V or 3.3V (Check module specs)
+    - GND -> GND
 */
 
-#include <ArduinoBLE.h>
+#include <SoftwareSerial.h>
 
-// BLE Service UUID
-const char *serviceUUID = "19B10000-E8F2-537E-4F6C-D104768A1214";
-// BLE Characteristic UUID (Read | Notify)
-const char *charUUID = "19B10001-E8F2-537E-4F6C-D104768A1214";
-
-BLEService spineService(serviceUUID);
-BLECharacteristic spineDataChar(charUUID, BLERead | BLENotify,
-                                2); // 2 bytes for 10-bit sensor data
+// RX on Pin 10, TX on Pin 11
+SoftwareSerial BTSerial(10, 11);
 
 const int sensorPin = A0;
-uint8_t sensorValues[2];
 
 void setup() {
+  // Initialize USB Serial for debugging
   Serial.begin(9600);
 
-  if (!BLE.begin()) {
-    Serial.println("starting BLE failed!");
-    while (1)
-      ;
-  }
+  // Initialize Bluetooth Serial
+  BTSerial.begin(9600);
 
-  BLE.setLocalName("ElbowTracker");
-  BLE.setAdvertisedService(spineService);
-
-  spineService.addCharacteristic(spineDataChar);
-  BLE.addService(spineService);
-
-  BLE.advertise();
-
-  Serial.println("Bluetooth device active, waiting for connections...");
+  Serial.println("Elbow Tracker Started");
+  Serial.println("Waiting for Bluetooth Connection on HC-05...");
 }
 
 void loop() {
-  BLEDevice central = BLE.central();
-
-  if (central) {
-    Serial.print("Connected to central: ");
-    Serial.println(central.address());
-
-    while (central.connected()) {
-      readSensor();
-      spineDataChar.writeValue(sensorValues, 2);
-      delay(50); // 20Hz update rate
-    }
-
-    Serial.print("Disconnected from central: ");
-    Serial.println(central.address());
-  }
+  readSensor();
+  delay(50); // 20Hz update rate
 }
 
 void readSensor() {
   int rawValue = analogRead(sensorPin);
 
-  // Send raw 10-bit value (0-1023) split into 2 bytes
-  // Byte 0: High byte (bits 8-9)
-  // Byte 1: Low byte (bits 0-7)
-  sensorValues[0] = (rawValue >> 8) & 0xFF;
-  sensorValues[1] = rawValue & 0xFF;
+  // Send raw value followed by newline
+  // Protocol: ASCII line, e.g., "512\r\n"
+  BTSerial.println(rawValue);
 
-  // Debug print
-  Serial.print("Raw: ");
-  Serial.println(rawValue);
+  // Optional: Print to USB Serial for debugging
+  // Serial.println(rawValue);
 }

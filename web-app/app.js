@@ -1,6 +1,3 @@
-const serviceUUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
-const charUUID = "19b10001-e8f2-537e-4f6c-d104768a1214";
-
 const sensorDataContainer = document.getElementById('sensorData');
 const connectBtn = document.getElementById('connectBtn');
 const calibrateBtn = document.getElementById('calibrateBtn');
@@ -11,9 +8,10 @@ const ctx = canvas.getContext('2d');
 const bufferSize = 5; // Taille de la fenêtre de moyenne
 let sensorBuffer = [];
 
-let device;
-let server;
-let characteristic;
+let port;
+let reader;
+let keepReading = false;
+
 let rawSensorValue = 0;
 let calibrationOffset = 0; // The raw value when arm is straight
 let currentAngle = 0; // In degrees, 0 = straight
@@ -32,10 +30,10 @@ window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
 connectBtn.addEventListener('click', async () => {
-    if (device && device.gatt.connected) {
-        disconnect();
+    if (port && port.readable) {
+        await disconnect();
     } else {
-        connect();
+        await connect();
     }
 });
 
@@ -45,61 +43,96 @@ calibrateBtn.addEventListener('click', () => {
 
 async function connect() {
     try {
-        statusText.textContent = "Requesting Bluetooth Device...";
-        device = await navigator.bluetooth.requestDevice({
-            filters: [{ services: [serviceUUID] }]
-        });
+        if ("serial" in navigator) {
+            statusText.textContent = "Requesting Serial Port...";
+            port = await navigator.serial.requestPort();
 
-        device.addEventListener('gattserverdisconnected', onDisconnected);
+            statusText.textContent = "Opening Port...";
+            await port.open({ baudRate: 9600 });
 
-        statusText.textContent = "Connecting to GATT Server...";
-        server = await device.gatt.connect();
+            statusText.textContent = "Connected";
+            statusText.classList.add('connected');
+            connectBtn.textContent = "Disconnect";
+            calibrateBtn.disabled = false;
 
-        statusText.textContent = "Getting Service...";
-        const service = await server.getPrimaryService(serviceUUID);
-
-        statusText.textContent = "Getting Characteristic...";
-        characteristic = await service.getCharacteristic(charUUID);
-
-        statusText.textContent = "Starting Notifications...";
-        await characteristic.startNotifications();
-        characteristic.addEventListener('characteristicvaluechanged', handleNotifications);
-
-        statusText.textContent = "Connected";
-        statusText.classList.add('connected');
-        connectBtn.textContent = "Disconnect";
-        calibrateBtn.disabled = false;
-
+            keepReading = true;
+            readSerialLoop();
+        } else {
+            statusText.textContent = "Web Serial API not supported in this browser.";
+        }
     } catch (error) {
         console.error('Connection failed!', error);
         statusText.textContent = "Connection Failed: " + error.message;
     }
 }
 
-function disconnect() {
-    if (device) {
-        if (device.gatt.connected) {
-            device.gatt.disconnect();
-        }
+async function disconnect() {
+    keepReading = false;
+    if (reader) {
+        await reader.cancel();
+    }
+    if (port) {
+        await port.close();
+        port = null;
+    }
+    onDisconnected();
+}
+
+function onDisconnected() {
+    statusText.textContent = "Disconnected";
+    statusText.classList.remove('connected');
+    connectBtn.textContent = "Connect to Serial";
+    calibrateBtn.disabled = true;
+    console.log("Port closed.");
+}
+
+class LineBreakTransformer {
+    constructor() {
+        this.container = '';
+    }
+
+    transform(chunk, controller) {
+        this.container += chunk;
+        const lines = this.container.split('\r\n');
+        this.container = lines.pop(); // Keep the rest (last partial line)
+        lines.forEach(line => controller.enqueue(line));
+    }
+
+    flush(controller) {
+        controller.enqueue(this.container);
     }
 }
 
-function onDisconnected(event) {
-    const device = event.target;
-    statusText.textContent = "Disconnected";
-    statusText.classList.remove('connected');
-    connectBtn.textContent = "Connect to Elbow Tracker";
-    calibrateBtn.disabled = true;
-    console.log(`Device ${device.name} is disconnected.`);
+async function readSerialLoop() {
+    // Pipe through TextDecoder and LineSplitter
+    const textDecoder = new TextDecoderStream();
+    const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+    const reader = textDecoder.readable
+        .pipeThrough(new TransformStream(new LineBreakTransformer()))
+        .getReader();
+
+    try {
+        while (keepReading) {
+            const { value, done } = await reader.read();
+            if (done) {
+                // Reader has been canceled.
+                break;
+            }
+            if (value) {
+                handleSerialData(value);
+            }
+        }
+    } catch (error) {
+        console.error("Error reading from serial:", error);
+    } finally {
+        reader.releaseLock();
+    }
 }
 
-function handleNotifications(event) {
-    const value = event.target.value;
-    const highByte = value.getUint8(0);
-    const lowByte = value.getUint8(1);
-
-    // Lecture de la valeur brute
-    const raw = (highByte << 8) | lowByte;
+function handleSerialData(dataString) {
+    // Parse integer from string
+    const raw = parseInt(dataString.trim());
+    if (isNaN(raw)) return;
 
     // Ajoute la nouvelle valeur au buffer
     sensorBuffer.push(raw);
@@ -118,7 +151,7 @@ function handleNotifications(event) {
     currentAngle = Math.abs(diff * sensitivity);
     currentAngle = Math.min(Math.max(currentAngle, 0), 140);
 
-    console.log("Raw:", rawSensorValue, "Angle:", currentAngle); // Debug
+    // console.log("Raw:", rawSensorValue, "Angle:", currentAngle); // Debug
 
     updateSensorDisplay();
     drawArm();
@@ -162,11 +195,6 @@ function drawArm() {
 
     // Calculate end point of forearm
     // Angle 0 = Straight up (same as upper arm)
-    // Angle 90 = Horizontal
-    // We subtract angle because canvas Y increases downwards, but we want to rotate "down" or "forward"
-    // Actually, let's say 0 is straight up (-PI/2).
-    // Bending increases angle towards horizontal.
-
     const rad = (currentAngle * Math.PI) / 180;
     const forearmAngle = -Math.PI / 2 + rad; // Start pointing up, rotate clockwise
 
